@@ -133,27 +133,30 @@ class BytecodePatchContext internal constructor(private val config: PatcherConfi
         // Free up memory before compiling the dex files.
         lookupMaps.close()
 
-        val patchedDexFileResults =
-            config.patchedFiles.resolve("dex").also {
-                it.deleteRecursively() // Make sure the directory is empty.
-                it.mkdirs()
-            }.apply {
-                MultiDexIO.writeDexFile(
-                    true,
-                    -1,
-                    this,
-                    BasicDexFileNamer(),
-                    object : DexFile {
-                        override fun getClasses() =
-                            this@BytecodePatchContext.classes.also(ProxyClassList::replaceClasses).toSet()
+        // Write DEX files directly to config.apkFiles so they can be included in the final APK
+        // alongside other resources, avoiding the need to copy them later
+        val dexOutputDir = config.apkFiles
 
-                        override fun getOpcodes() = this@BytecodePatchContext.opcodes
-                    },
-                    DexIO.DEFAULT_MAX_DEX_POOL_SIZE,
-                ) { _, entryName, _ -> logger.info { "Compiled $entryName" } }
-            }.listFiles(FileFilter { it.isFile })!!.map {
-                PatcherResult.PatchedDexFile(it.name, it.inputStream())
-            }.toSet()
+        MultiDexIO.writeDexFile(
+            true,
+            -1,
+            dexOutputDir,
+            BasicDexFileNamer(),
+            object : DexFile {
+                override fun getClasses() =
+                    this@BytecodePatchContext.classes.also(ProxyClassList::replaceClasses).toSet()
+
+                override fun getOpcodes() = this@BytecodePatchContext.opcodes
+            },
+            DexIO.DEFAULT_MAX_DEX_POOL_SIZE,
+        ) { _, entryName, _ -> logger.info { "Compiled $entryName" } }
+
+        // Return the compiled DEX files from apkFiles directory
+        val patchedDexFileResults = dexOutputDir.listFiles { file ->
+            file.isFile && file.extension == "dex"
+        }!!.map {
+            PatcherResult.PatchedDexFile(it.name, it.inputStream())
+        }.toSet()
 
         System.gc()
 

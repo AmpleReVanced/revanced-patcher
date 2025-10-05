@@ -52,7 +52,7 @@ dependencies {
         exclude(group = "xerces", module = "xmlParserAPIs")
     }
 
-    implementation(libs.apktool.lib)
+    implementation(libs.arsclib)
     implementation(libs.kotlin.reflect)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.multidexlib2)

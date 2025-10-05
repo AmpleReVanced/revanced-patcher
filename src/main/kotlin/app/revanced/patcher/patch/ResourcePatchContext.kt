@@ -5,17 +5,12 @@ import app.revanced.patcher.PackageMetadata
 import app.revanced.patcher.PatcherConfig
 import app.revanced.patcher.PatcherResult
 import app.revanced.patcher.util.Document
-import brut.androlib.AaptInvoker
-import brut.androlib.ApkDecoder
-import brut.androlib.apk.UsesFramework
-import brut.androlib.res.Framework
-import brut.androlib.res.ResourcesDecoder
-import brut.androlib.res.decoder.AndroidManifestResourceParser
-import brut.androlib.res.decoder.XmlPullStreamDecoder
-import brut.androlib.res.xml.ResXmlPatcher
-import brut.directory.ExtFile
+import com.reandroid.apk.ApkModuleRawDecoder
+import com.reandroid.apk.ApkModuleXmlDecoder
+import com.reandroid.apk.ApkModuleXmlEncoder
+import com.reandroid.archive.InputSource
+import java.io.File
 import java.io.InputStream
-import java.io.OutputStream
 import java.nio.file.Files
 import java.util.logging.Logger
 
@@ -52,60 +47,32 @@ class ResourcePatchContext internal constructor(
      * @param mode The [ResourceMode] to use.
      */
     internal fun decodeResources(mode: ResourceMode) =
-        with(packageMetadata.apkInfo) {
+        with(packageMetadata.apkModule) {
             config.initializeTemporaryFilesDirectories()
-
-            // Needed to decode resources.
-            val resourcesDecoder = ResourcesDecoder(config.resourceConfig, this)
 
             if (mode == ResourceMode.FULL) {
                 logger.info("Decoding resources")
 
-                resourcesDecoder.decodeResources(config.apkFiles)
-                resourcesDecoder.decodeManifest(config.apkFiles)
+                val decoder = ApkModuleXmlDecoder(this)
+                decoder.dexDecoder = null
+                decoder.decode(config.apkFiles)
 
-                // Needed to record uncompressed files.
-                val apkDecoder = ApkDecoder(config.resourceConfig, this)
-                apkDecoder.recordUncompressedFiles(resourcesDecoder.resFileMapping)
-
-                usesFramework =
-                    UsesFramework().apply {
-                        ids = resourcesDecoder.resTable.listFramePackages().map { it.id }
-                    }
+                // Update metadata from decoded manifest
+                androidManifest?.let { manifest ->
+                    packageMetadata.packageName = manifest.packageName ?: ""
+                    packageMetadata.packageVersion = manifest.versionName ?: manifest.versionCode?.toString() ?: ""
+                }
             } else {
                 logger.info("Decoding app manifest")
 
-                // Decode manually instead of using resourceDecoder.decodeManifest
-                // because it does not support decoding to an OutputStream.
-                XmlPullStreamDecoder(
-                    AndroidManifestResourceParser(resourcesDecoder.resTable),
-                    resourcesDecoder.resXmlSerializer,
-                ).decodeManifest(
-                    apkFile.directory.getFileInput("AndroidManifest.xml"),
-                    // Older Android versions do not support OutputStream.nullOutputStream()
-                    object : OutputStream() {
-                        override fun write(b: Int) { // Do nothing.
-                        }
-                    },
-                )
+                val decoder = ApkModuleRawDecoder(this)
+                decoder.dexDecoder = null
+                decoder.decode(config.apkFiles)
 
-                // Get the package name and version from the manifest using the XmlPullStreamDecoder.
-                // XmlPullStreamDecoder.decodeManifest() sets metadata.apkInfo.
-                packageMetadata.let { metadata ->
-                    metadata.packageName = resourcesDecoder.resTable.packageRenamed
-                    versionInfo.let {
-                        metadata.packageVersion = it.versionName ?: it.versionCode
-                    }
-
-                    /*
-                     The ResTable if flagged as sparse if the main package is not loaded, which is the case here,
-                     because ResourcesDecoder.decodeResources loads the main package
-                     and not XmlPullStreamDecoder.decodeManifest.
-                     See ARSCDecoder.readTableType for more info.
-
-                     Set this to false again to prevent the ResTable from being flagged as sparse falsely.
-                     */
-                    metadata.apkInfo.sparseResources = false
+                // Update metadata from manifest
+                androidManifest?.let { manifest ->
+                    packageMetadata.packageName = manifest.packageName ?: ""
+                    packageMetadata.packageVersion = manifest.versionName ?: manifest.versionCode?.toString() ?: ""
                 }
             }
         }
@@ -126,24 +93,23 @@ class ResourcePatchContext internal constructor(
         val resourcesApkFile =
             if (config.resourceMode == ResourceMode.FULL) {
                 resources.resolve("resources.apk").apply {
+                    val encoder = ApkModuleXmlEncoder().apply {
+                        config.frameworkDirectory?.let { frameworkDir ->
+                            if (frameworkDir.exists() && frameworkDir.isDirectory) {
+                                frameworkDir.listFiles()?.forEach { frameworkFile ->
+                                    if (frameworkFile.extension == "apk") {
+                                        apkModule.addExternalFramework(frameworkFile)
+                                    }
+                                }
+                            }
+                        }
+                        dexEncoder = null // We don't want to modify the dex files here.
+                        scanDirectory(config.apkFiles)
+                    }
+
                     // Compile the resources.apk file.
-                    AaptInvoker(
-                        config.resourceConfig,
-                        packageMetadata.apkInfo,
-                    ).invokeAapt(
-                        resources.resolve("resources.apk"),
-                        config.apkFiles.resolve("AndroidManifest.xml").also {
-                            ResXmlPatcher.fixingPublicAttrsInProviderAttributes(it)
-                        },
-                        config.apkFiles.resolve("res"),
-                        null,
-                        null,
-                        packageMetadata.apkInfo.usesFramework.let { usesFramework ->
-                            usesFramework.ids.map { id ->
-                                Framework(config.resourceConfig).getFrameworkApk(id, usesFramework.tag)
-                            }.toTypedArray()
-                        },
-                    )
+                    val encodedModule = encoder.apkModule
+                    encodedModule.writeApk(this)
                 }
             } else {
                 null
@@ -151,19 +117,12 @@ class ResourcePatchContext internal constructor(
 
         val otherFiles =
             config.apkFiles.listFiles()!!.filter {
-                // Excluded because present in resources.other.
-                // TODO: We are reusing config.apkFiles as a temporarily directory for extracting resources.
-                //  This is not ideal as it could conflict with files such as the ones that we filter here.
-                //  The problem is that ResourcePatchContext#get returns a File relative to config.apkFiles,
-                //  and we need to extract files to that directory.
-                //  A solution would be to use config.apkFiles as the working directory for the patching process.
-                //  Once all patches have been executed, we can move the decoded resources to a new directory.
-                //  The filters wouldn't be needed anymore.
-                //  For now, we assume that the files we filter here are not needed for the patching process.
-                it.name != "AndroidManifest.xml" &&
-                    it.name != "res" &&
-                    // Generated by Androlib.
-                    it.name != "build"
+                // Include DEX files and other files that should be in the APK root,
+                // but exclude directories and files that are handled separately
+                it.isFile && 
+                    it.name != "AndroidManifest.xml" &&
+                    it.name != "build" &&
+                    !it.name.endsWith(".json")
             }
 
         val otherResourceFiles =
@@ -178,10 +137,19 @@ class ResourcePatchContext internal constructor(
                 null
             }
 
+        val doNotCompress = mutableSetOf<String>()
+        packageMetadata.apkModule.zipEntryMap?.let { entryMap ->
+            entryMap.forEach { entry ->
+                if (entry.method == 0) { // STORED method means uncompressed
+                    doNotCompress.add(entry.name)
+                }
+            }
+        }
+
         return PatcherResult.PatchedResources(
             resourcesApkFile,
             otherResourceFiles,
-            packageMetadata.apkInfo.doNotCompress?.toSet() ?: emptySet(),
+            doNotCompress,
             deleteResources,
         )
     }
@@ -195,14 +163,166 @@ class ResourcePatchContext internal constructor(
     operator fun get(
         path: String,
         copy: Boolean = true,
-    ) = config.apkFiles.resolve(path).apply {
-        if (copy && !exists()) {
-            with(ExtFile(config.apkFile).directory) {
-                if (containsFile(path) || containsDir(path)) {
-                    copyToDir(config.apkFiles, path)
+    ): File {
+        val directFile = config.apkFiles.resolve(path)
+        if (directFile.exists()) {
+            return directFile
+        }
+
+        val resourcesDir = config.apkFiles.resolve("resources")
+        if (resourcesDir.exists() && resourcesDir.isDirectory) {
+            val packageDirs = resourcesDir.listFiles()
+                ?.filter { it.isDirectory && it.name.startsWith("package_") }
+                ?: emptyList()
+
+            val basePackageName = packageMetadata.packageName
+            packageDirs.forEach { packageDir ->
+                val packageJsonFile = packageDir.resolve("package.json")
+                if (packageJsonFile.exists()) {
+                    try {
+                        val packageJson = packageJsonFile.readText()
+                        val packageNameMatch = Regex(""""package_name"\s*:\s*"([^"]+)"""")
+                            .find(packageJson)
+
+                        if (packageNameMatch != null && packageNameMatch.groupValues[1] == basePackageName) {
+                            val splitApkFile = packageDir.resolve(path)
+                            if (splitApkFile.exists()) {
+                                logger.fine("Found resource in base package ($basePackageName): ${packageDir.name}/$path")
+                                return splitApkFile
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore and continue
+                    }
+                }
+            }
+
+            packageDirs.forEach { packageDir ->
+                val splitApkFile = packageDir.resolve(path)
+                if (splitApkFile.exists()) {
+                    logger.fine("Found resource in Split APK package: ${packageDir.name}/$path")
+                    return splitApkFile
                 }
             }
         }
+
+        if (!copy) {
+            return directFile
+        }
+
+        try {
+            val apkModule = packageMetadata.apkModule
+            val inputSource: InputSource? = apkModule.getInputSource(path)
+
+            if (inputSource != null) {
+                directFile.parentFile?.mkdirs()
+
+                inputSource.write(directFile)
+
+                logger.fine("Extracted resource file: $path")
+                return directFile
+            } else {
+                logger.warning("Resource file not found in APK: $path")
+                return directFile
+            }
+        } catch (e: Exception) {
+            logger.warning("Failed to extract file '$path': ${e.message}")
+            throw PatchException("Failed to extract resource file '$path' from APK: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Get a file from [PatcherConfig.apkFiles] from a specific package.
+     * Uses package.json metadata to find the correct Split APK package.
+     *
+     * @param path The path of the file.
+     * @param packageName The package name to search for (e.g., "com.kakao.talk").
+     * @param copy Whether to copy the file from [PatcherConfig.apkFile] if it does not exist yet.
+     * @return The file from the specified package.
+     * @throws PatchException if the package is not found.
+     */
+    fun get(
+        path: String,
+        packageName: String,
+        copy: Boolean = true,
+    ): java.io.File {
+        // Search for the package by reading package.json files
+        val resourcesDir = config.apkFiles.resolve("resources")
+        if (resourcesDir.exists() && resourcesDir.isDirectory) {
+            resourcesDir.listFiles()?.forEach { packageDir ->
+                if (packageDir.isDirectory && packageDir.name.startsWith("package_")) {
+                    // Read package.json to check package_name
+                    val packageJsonFile = packageDir.resolve("package.json")
+                    if (packageJsonFile.exists()) {
+                        try {
+                            val packageJson = packageJsonFile.readText()
+                            // Simple JSON parsing to extract package_name
+                            val packageNameMatch = Regex(""""package_name"\s*:\s*"([^"]+)"""")
+                                .find(packageJson)
+
+                            if (packageNameMatch != null && packageNameMatch.groupValues[1] == packageName) {
+                                val targetFile = packageDir.resolve(path)
+                                if (targetFile.exists()) {
+                                    logger.fine("Found resource in package '$packageName': ${packageDir.name}/$path")
+                                    return targetFile
+                                } else if (copy) {
+                                    // Try to extract from APK
+                                    try {
+                                        val apkModule = packageMetadata.apkModule
+                                        val inputSource: InputSource? = apkModule.getInputSource(path)
+
+                                        if (inputSource != null) {
+                                            targetFile.parentFile?.mkdirs()
+                                            inputSource.write(targetFile)
+                                            logger.fine("Extracted resource file for package '$packageName': $path")
+                                            return targetFile
+                                        }
+                                    } catch (e: Exception) {
+                                        logger.warning("Failed to extract file '$path' for package '$packageName': ${e.message}")
+                                    }
+                                }
+                                // File not found in this package, but package matched
+                                throw PatchException("Resource '$path' not found in package '$packageName'")
+                            }
+                        } catch (e: Exception) {
+                            logger.warning("Failed to read package.json in ${packageDir.name}: ${e.message}")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Package not found
+        throw PatchException("Split APK package with name '$packageName' not found. Available packages: ${getAvailablePackages().joinToString(", ")}")
+    }
+
+    /**
+     * Get list of available package names from Split APK structure.
+     * @return List of package names found in package.json files.
+     */
+    private fun getAvailablePackages(): List<String> {
+        val packages = mutableListOf<String>()
+        val resourcesDir = config.apkFiles.resolve("resources")
+
+        if (resourcesDir.exists() && resourcesDir.isDirectory) {
+            resourcesDir.listFiles()?.forEach { packageDir ->
+                if (packageDir.isDirectory && packageDir.name.startsWith("package_")) {
+                    val packageJsonFile = packageDir.resolve("package.json")
+                    if (packageJsonFile.exists()) {
+                        try {
+                            val packageJson = packageJsonFile.readText()
+                            val packageNameMatch = Regex(""""package_name"\s*:\s*"([^"]+)"""")
+                                .find(packageJson)
+                            packageNameMatch?.groupValues?.get(1)?.let { packages.add(it) }
+                        } catch (e: Exception) {
+                            // Ignore
+                        }
+                    }
+                }
+            }
+        }
+
+        return packages
     }
 
     /**

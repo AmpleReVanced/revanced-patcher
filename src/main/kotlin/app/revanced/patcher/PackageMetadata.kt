@@ -1,13 +1,13 @@
 package app.revanced.patcher
 
-import brut.androlib.apk.ApkInfo
+import com.reandroid.apk.ApkModule
 
 /**
  * Metadata about a package.
  *
- * @param apkInfo The [ApkInfo] of the apk file.
+ * @param apkModule The [ApkModule] of the apk file.
  */
-class PackageMetadata internal constructor(internal val apkInfo: ApkInfo) {
+class PackageMetadata internal constructor(internal val apkModule: ApkModule) {
     lateinit var packageName: String
         internal set
 

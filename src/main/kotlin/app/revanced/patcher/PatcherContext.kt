@@ -3,9 +3,9 @@ package app.revanced.patcher
 import app.revanced.patcher.patch.BytecodePatchContext
 import app.revanced.patcher.patch.Patch
 import app.revanced.patcher.patch.ResourcePatchContext
-import brut.androlib.apk.ApkInfo
-import brut.directory.ExtFile
+import com.reandroid.apk.ApkModule
 import java.io.Closeable
+import java.io.IOException
 
 /**
  * A context for the patcher containing the current state of the patcher.
@@ -17,7 +17,39 @@ class PatcherContext internal constructor(config: PatcherConfig): Closeable {
     /**
      * [PackageMetadata] of the supplied [PatcherConfig.apkFile].
      */
-    val packageMetadata = PackageMetadata(ApkInfo(ExtFile(config.apkFile)))
+    val packageMetadata: PackageMetadata
+
+    init {
+        try {
+            val apkModule = ApkModule.loadApkFile(config.apkFile).apply {
+                setLoadDefaultFramework(true)
+            }
+
+            config.frameworkDirectory?.let { frameworkDir ->
+                if (frameworkDir.exists() && frameworkDir.isDirectory) {
+                    frameworkDir.listFiles()?.forEach { frameworkFile ->
+                        if (frameworkFile.extension == "apk") {
+                            apkModule.addExternalFramework(frameworkFile)
+                        }
+                    }
+                }
+            }
+
+            config.externalFrameworks.forEach { frameworkFile ->
+                apkModule.addExternalFramework(frameworkFile)
+            }
+
+            packageMetadata = PackageMetadata(apkModule).apply {
+                val manifest = apkModule.androidManifest
+                if (manifest != null) {
+                    packageName = manifest.packageName ?: ""
+                    packageVersion = manifest.versionName ?: manifest.versionCode?.toString() ?: ""
+                }
+            }
+        } catch (e: IOException) {
+            throw IllegalStateException("Failed to load APK file: ${config.apkFile.absolutePath}", e)
+        }
+    }
 
     /**
      * The set of [Patch]es.

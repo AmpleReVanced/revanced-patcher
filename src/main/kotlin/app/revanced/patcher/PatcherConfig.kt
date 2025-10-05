@@ -1,7 +1,6 @@
 package app.revanced.patcher
 
 import app.revanced.patcher.patch.ResourcePatchContext
-import brut.androlib.Config
 import java.io.File
 import java.util.logging.Logger
 
@@ -10,13 +9,11 @@ import java.util.logging.Logger
  *
  * @param apkFile The apk file to patch.
  * @param temporaryFilesPath A path to a folder to store temporary files in.
- * @param aaptBinaryPath A path to a custom aapt binary.
  * @param frameworkFileDirectory A path to the directory to cache the framework file in.
  */
 class PatcherConfig(
     internal val apkFile: File,
     private val temporaryFilesPath: File = File("revanced-temporary-files"),
-    aaptBinaryPath: String? = null,
     frameworkFileDirectory: String? = null,
 ) {
     private val logger = Logger.getLogger(PatcherConfig::class.java.name)
@@ -29,14 +26,13 @@ class PatcherConfig(
     internal var resourceMode = ResourcePatchContext.ResourceMode.NONE
 
     /**
-     * The configuration for decoding and compiling resources.
+     * The directory for framework files (optional).
      */
-    internal val resourceConfig =
-        Config.getDefaultConfig().apply {
-            useAapt2 = true
-            aaptPath = aaptBinaryPath ?: ""
-            frameworkDirectory = frameworkFileDirectory
-        }
+    internal val frameworkDirectory: File? = frameworkFileDirectory?.let { File(it) }
+    /**
+     * List of external framework files.
+     */
+    internal val externalFrameworks = mutableListOf<File>()
 
     /**
      * The path to the temporary apk files directory.
