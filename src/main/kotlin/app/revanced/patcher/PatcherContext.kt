@@ -39,13 +39,7 @@ class PatcherContext internal constructor(config: PatcherConfig): Closeable {
                 apkModule.addExternalFramework(frameworkFile)
             }
 
-            packageMetadata = PackageMetadata(apkModule).apply {
-                val manifest = apkModule.androidManifest
-                if (manifest != null) {
-                    packageName = manifest.packageName ?: ""
-                    packageVersion = manifest.versionName ?: manifest.versionCode?.toString() ?: ""
-                }
-            }
+            packageMetadata = PackageMetadata(apkModule)
         } catch (e: IOException) {
             throw IllegalStateException("Failed to load APK file: ${config.apkFile.absolutePath}", e)
         }
