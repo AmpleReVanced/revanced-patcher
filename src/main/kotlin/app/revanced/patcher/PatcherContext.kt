@@ -65,5 +65,8 @@ class PatcherContext internal constructor(config: PatcherConfig): Closeable {
      */
     internal val bytecodeContext = BytecodePatchContext(config)
 
-    override fun close() = bytecodeContext.close()
+    override fun close() {
+        bytecodeContext.close()
+        packageMetadata.apkModule.close()
+    }
 }
