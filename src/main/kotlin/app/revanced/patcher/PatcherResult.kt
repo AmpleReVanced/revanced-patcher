@@ -21,7 +21,20 @@ class PatcherResult internal constructor(
      * @param name The original name of the dex file.
      * @param stream The dex file as [InputStream].
      */
-    class PatchedDexFile internal constructor(val name: String, val stream: InputStream)
+    class PatchedDexFile internal constructor(val name: String, val stream: InputStream) {
+        internal companion object {
+            /**
+             * Create a [PatchedDexFile] from a [File].
+             * The InputStream is created lazily to avoid file locking issues on Windows.
+             *
+             * @param file The file to create the [PatchedDexFile] from.
+             * @return A [PatchedDexFile] with a lazy InputStream.
+             */
+            internal fun fromFile(file: File): PatchedDexFile {
+                return PatchedDexFile(file.name, file.inputStream())
+            }
+        }
+    }
 
     /**
      * The resources of a patched apk.

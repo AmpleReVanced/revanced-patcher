@@ -168,12 +168,14 @@ class ResourcePatchContext internal constructor(
 
         val otherFiles =
             config.apkFiles.listFiles()!!.filter {
-                // Include DEX files and other files that should be in the APK root.
+                // Include non-DEX files that should be in the APK root.
+                // DEX files are already handled by BytecodePatchContext and returned as PatchedDexFile objects.
                 // AndroidManifest.xml is already included in resources.apk when FULL mode,
                 // but we need to include it in otherResourceFiles for RAW_ONLY mode.
                 it.isFile && 
                     it.name != "build" &&
                     !it.name.endsWith(".json") &&
+                    !it.name.endsWith(".dex") &&  // Exclude DEX files - already handled by BytecodePatchContext
                     // Exclude manifest only in FULL mode (already in resources.apk)
                     !(config.resourceMode == ResourceMode.FULL && it.name == "AndroidManifest.xml") &&
                     // Exclude res directory metadata
@@ -185,7 +187,11 @@ class ResourcePatchContext internal constructor(
                 // Move the other resources files.
                 resources.resolve("other").also { it.mkdirs() }.apply {
                     otherFiles.forEach { file ->
-                        Files.move(file.toPath(), resolve(file.name).toPath())
+                        Files.move(
+                            file.toPath(),
+                            resolve(file.name).toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                        )
                     }
                 }
             } else {

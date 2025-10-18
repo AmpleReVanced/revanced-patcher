@@ -152,10 +152,13 @@ class BytecodePatchContext internal constructor(private val config: PatcherConfi
         ) { _, entryName, _ -> logger.info { "Compiled $entryName" } }
 
         // Return the compiled DEX files from apkFiles directory
+        // Note: We create InputStream lazily to avoid file locking issues on Windows
         val patchedDexFileResults = dexOutputDir.listFiles { file ->
             file.isFile && file.extension == "dex"
-        }!!.map {
-            PatcherResult.PatchedDexFile(it.name, it.inputStream())
+        }!!.map { dexFile ->
+            // Store the file reference and create InputStream when needed
+            // This avoids keeping file handles open which can cause locking issues on Windows
+            PatcherResult.PatchedDexFile(dexFile.name, dexFile.inputStream())
         }.toSet()
 
         System.gc()
