@@ -19,19 +19,33 @@ class PatcherResult internal constructor(
      * A dex file.
      *
      * @param name The original name of the dex file.
-     * @param stream The dex file as [InputStream].
+     * @param streamSupplier Supplier for the dex file [InputStream].
      */
-    class PatchedDexFile internal constructor(val name: String, val stream: InputStream) {
+    class PatchedDexFile internal constructor(
+        val name: String, 
+        private val streamSupplier: () -> InputStream
+    ) {
+        /**
+         * Get the InputStream for this dex file.
+         */
+        val stream: InputStream
+            get() = streamSupplier()
+        
+        // Constructor for immediate InputStream (backwards compatibility)
+        internal constructor(name: String, stream: InputStream) : this(name, { stream })
+        
         internal companion object {
             /**
              * Create a [PatchedDexFile] from a [File].
-             * The InputStream is created lazily to avoid file locking issues on Windows.
+             * Reads the file content immediately to avoid issues with file moving on Windows.
              *
              * @param file The file to create the [PatchedDexFile] from.
-             * @return A [PatchedDexFile] with a lazy InputStream.
+             * @return A [PatchedDexFile] with the file content.
              */
             internal fun fromFile(file: File): PatchedDexFile {
-                return PatchedDexFile(file.name, file.inputStream())
+                // Read file content immediately before it gets moved
+                val content = file.readBytes()
+                return PatchedDexFile(file.name) { content.inputStream() }
             }
         }
     }
