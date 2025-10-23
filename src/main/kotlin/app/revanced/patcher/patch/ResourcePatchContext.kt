@@ -54,7 +54,7 @@ class ResourcePatchContext internal constructor(
                 logger.info("Decoding resources")
 
                 setLoadDefaultFramework(true)
-                
+
                 config.frameworkDirectory?.let { frameworkDir ->
                     if (frameworkDir.exists() && frameworkDir.isDirectory) {
                         frameworkDir.listFiles()?.forEach { frameworkFile ->
@@ -68,10 +68,10 @@ class ResourcePatchContext internal constructor(
 
                 val decoder = ApkModuleXmlDecoder(this)
                 decoder.dexDecoder = null
-                
+
                 try {
                     decoder.decode(config.apkFiles)
-                    
+
                     // Update metadata from decoded manifest
                     androidManifest?.let { manifest ->
                         packageMetadata.packageName = manifest.packageName ?: ""
@@ -86,10 +86,10 @@ class ResourcePatchContext internal constructor(
 
                 val decoder = ApkModuleRawDecoder(this)
                 decoder.dexDecoder = null
-                
+
                 try {
                     decoder.decode(config.apkFiles)
-                    
+
                     // Update metadata from manifest
                     androidManifest?.let { manifest ->
                         packageMetadata.packageName = manifest.packageName ?: ""
@@ -99,43 +99,8 @@ class ResourcePatchContext internal constructor(
                     logger.severe("Failed to decode manifest: ${e.message}")
                     throw PatchException("Failed to decode manifest", e)
                 }
-        } else {
-            logger.info("Decoding app manifest")
-
-            // Decode manually instead of using resourceDecoder.decodeManifest
-            // because it does not support decoding to an OutputStream.
-            AndroidManifestPullStreamDecoder(
-                AndroidManifestResourceParser(resourcesDecoder.resTable),
-                resourcesDecoder.newXmlSerializer(),
-            ).decode(
-                apkFile.directory.getFileInput("AndroidManifest.xml"),
-                // Older Android versions do not support OutputStream.nullOutputStream()
-                object : OutputStream() {
-                    override fun write(b: Int) { // Do nothing.
-                    }
-                },
-            )
-
-            // Get the package name and version from the manifest using the XmlPullStreamDecoder.
-            // AndroidManifestPullStreamDecoder.decode() sets metadata.apkInfo.
-            packageMetadata.let { metadata ->
-                metadata.packageName = resourcesDecoder.resTable.packageRenamed
-                versionInfo.let {
-                    metadata.packageVersion = it.versionName ?: it.versionCode
-                }
-
-                /*
-                 The ResTable if flagged as sparse if the main package is not loaded, which is the case here,
-                 because ResourcesDecoder.decodeResources loads the main package
-                 and not AndroidManifestPullStreamDecoder.decode.
-                 See ARSCDecoder.readTableType for more info.
-
-                 Set this to false again to prevent the ResTable from being flagged as sparse falsely.
-                 */
-                metadata.apkInfo.sparseResources = false
             }
         }
-    }
 
     /**
      * Compile resources in [PatcherConfig.apkFiles].
@@ -157,15 +122,15 @@ class ResourcePatchContext internal constructor(
                     if (!manifestFile.exists()) {
                         throw PatchException("AndroidManifest.xml not found in ${config.apkFiles}")
                     }
-                    
+
                     logger.info("Encoding resources from ${config.apkFiles}")
-                    
+
                     val encoder = ApkModuleXmlEncoder().apply {
                         val encoderModule = this.apkModule
-                        
+
                         packageMetadata.apkModule.let { decoderModule ->
                             encoderModule.setLoadDefaultFramework(true)
-                            
+
                             config.frameworkDirectory?.let { frameworkDir ->
                                 if (frameworkDir.exists() && frameworkDir.isDirectory) {
                                     frameworkDir.listFiles()?.forEach { frameworkFile ->
@@ -177,23 +142,23 @@ class ResourcePatchContext internal constructor(
                                 }
                             }
                         }
-                        
+
                         dexEncoder = null // We don't want to modify the dex files here.
                         scanDirectory(config.apkFiles)
                     }
 
                     val encodedModule = encoder.apkModule
-                    
+
                     encodedModule.androidManifest?.let { manifest ->
                         logger.info("Encoding AndroidManifest: package=${manifest.packageName}, version=${manifest.versionName ?: manifest.versionCode}")
-                        
+
                         manifest.refresh()
-                        
+
                         if (manifest.packageName.isNullOrEmpty()) {
                             throw PatchException("AndroidManifest.xml has no package name")
                         }
                     } ?: throw PatchException("AndroidManifest not found in encoded module")
-                    
+
                     logger.info("Writing resources.apk")
                     encodedModule.writeApk(this)
                 }
@@ -206,13 +171,13 @@ class ResourcePatchContext internal constructor(
                 // Include DEX files and other files that should be in the APK root.
                 // AndroidManifest.xml is already included in resources.apk when FULL mode,
                 // but we need to include it in otherResourceFiles for RAW_ONLY mode.
-                it.isFile && 
-                    it.name != "build" &&
-                    !it.name.endsWith(".json") &&
-                    // Exclude manifest only in FULL mode (already in resources.apk)
-                    !(config.resourceMode == ResourceMode.FULL && it.name == "AndroidManifest.xml") &&
-                    // Exclude res directory metadata
-                    it.name != "res"
+                it.isFile &&
+                        it.name != "build" &&
+                        !it.name.endsWith(".json") &&
+                        // Exclude manifest only in FULL mode (already in resources.apk)
+                        !(config.resourceMode == ResourceMode.FULL && it.name == "AndroidManifest.xml") &&
+                        // Exclude res directory metadata
+                        it.name != "res"
             }
 
         val otherResourceFiles =

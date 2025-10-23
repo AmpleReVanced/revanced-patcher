@@ -16,25 +16,6 @@ class PatcherConfig(
     private val temporaryFilesPath: File = File("revanced-temporary-files"),
     frameworkFileDirectory: String? = null,
 ) {
-    /**
-     * The configuration for the patcher.
-     *
-     * @param apkFile The apk file to patch.
-     * @param temporaryFilesPath A path to a folder to store temporary files in.
-     * @param aaptBinaryPath A path to a custom aapt binary.
-     * @param frameworkFileDirectory A path to the directory to cache the framework file in.
-     */
-    @Deprecated(
-        "Use the constructor with a File for aaptBinaryPath instead.",
-        ReplaceWith("PatcherConfig(apkFile, temporaryFilesPath, aaptBinaryPath?.let { File(it) }, frameworkFileDirectory)"),
-    )
-    constructor(
-        apkFile: File,
-        temporaryFilesPath: File = File("revanced-temporary-files"),
-        aaptBinaryPath: String? = null,
-        frameworkFileDirectory: String? = null,
-    ) : this(apkFile, temporaryFilesPath, aaptBinaryPath?.let { File(it) }, frameworkFileDirectory)
-
     private val logger = Logger.getLogger(PatcherConfig::class.java.name)
 
     /**
