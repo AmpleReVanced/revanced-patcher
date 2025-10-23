@@ -99,8 +99,43 @@ class ResourcePatchContext internal constructor(
                     logger.severe("Failed to decode manifest: ${e.message}")
                     throw PatchException("Failed to decode manifest", e)
                 }
+        } else {
+            logger.info("Decoding app manifest")
+
+            // Decode manually instead of using resourceDecoder.decodeManifest
+            // because it does not support decoding to an OutputStream.
+            AndroidManifestPullStreamDecoder(
+                AndroidManifestResourceParser(resourcesDecoder.resTable),
+                resourcesDecoder.newXmlSerializer(),
+            ).decode(
+                apkFile.directory.getFileInput("AndroidManifest.xml"),
+                // Older Android versions do not support OutputStream.nullOutputStream()
+                object : OutputStream() {
+                    override fun write(b: Int) { // Do nothing.
+                    }
+                },
+            )
+
+            // Get the package name and version from the manifest using the XmlPullStreamDecoder.
+            // AndroidManifestPullStreamDecoder.decode() sets metadata.apkInfo.
+            packageMetadata.let { metadata ->
+                metadata.packageName = resourcesDecoder.resTable.packageRenamed
+                versionInfo.let {
+                    metadata.packageVersion = it.versionName ?: it.versionCode
+                }
+
+                /*
+                 The ResTable if flagged as sparse if the main package is not loaded, which is the case here,
+                 because ResourcesDecoder.decodeResources loads the main package
+                 and not AndroidManifestPullStreamDecoder.decode.
+                 See ARSCDecoder.readTableType for more info.
+
+                 Set this to false again to prevent the ResTable from being flagged as sparse falsely.
+                 */
+                metadata.apkInfo.sparseResources = false
             }
         }
+    }
 
     /**
      * Compile resources in [PatcherConfig.apkFiles].
