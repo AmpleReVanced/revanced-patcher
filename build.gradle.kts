@@ -26,13 +26,11 @@ repositories {
     mavenCentral()
     google()
     maven {
-        url = uri("https://git.naijun.dev/api/packages/revanced/maven")
-        credentials<HttpHeaderCredentials>(HttpHeaderCredentials::class.java) {
-            name = "Authorization"
-            value = "token ${project.findProperty("gitea.accessToken") as String? ?: System.getenv("GITEA_TOKEN")}"
-        }
-        authentication {
-            register("header", HttpHeaderAuthentication::class.java)
+        // A repository must be specified for some reason. "registry" is a dummy.
+        url = uri("https://maven.pkg.github.com/amplerevanced/registry")
+        credentials {
+            username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
+            password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
         }
     }
     maven {
@@ -80,16 +78,11 @@ java {
 publishing {
     repositories {
         maven {
-            name = "GiteaPackages"
-            url = uri("https://git.naijun.dev/api/packages/revanced/maven")
-
-            credentials<HttpHeaderCredentials>(HttpHeaderCredentials::class.java) {
-                name = "Authorization"
-                value = "token ${project.findProperty("gitea.accessToken") as String? ?: System.getenv("GITEA_TOKEN")}"
-            }
-
-            authentication {
-                register("header", HttpHeaderAuthentication::class.java)
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/amplerevanced/revanced-patcher")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR")
+                password = System.getenv("GITHUB_TOKEN")
             }
         }
     }
