@@ -152,12 +152,72 @@ class ResourcePatchContext internal constructor(
                     encodedModule.androidManifest?.let { manifest ->
                         logger.info("Encoding AndroidManifest: package=${manifest.packageName}, version=${manifest.versionName ?: manifest.versionCode}")
 
-                        manifest.refresh()
+                        manifest.refreshFull()
 
                         if (manifest.packageName.isNullOrEmpty()) {
                             throw PatchException("AndroidManifest.xml has no package name")
                         }
+
+                        val newPackageName = manifest.packageName
+                        encodedModule.tableBlock?.let { tableBlock ->
+                            logger.info("Synchronizing resources.arsc package names with manifest: $newPackageName")
+
+                            try {
+                                val packageNames = tableBlock.listPackages()
+                                    .mapNotNull { it.name }
+                                    .filter { it.isNotEmpty() }
+
+                                if (packageNames.isEmpty()) {
+                                    logger.warning("No packages found in resources.arsc")
+                                    return@let
+                                }
+
+                                val originalPackageName = packageNames.minByOrNull { it.length }
+                                    ?: throw PatchException("Could not determine base package name")
+
+                                if (originalPackageName == newPackageName) {
+                                    logger.info("Package names already match, skipping update")
+                                    return@let
+                                }
+
+                                logger.info("Base package detected: $originalPackageName")
+                                logger.info("Will rename to: $newPackageName")
+
+                                tableBlock.addPackageNameAlias(originalPackageName, newPackageName)
+                                logger.info("Registered package alias: $originalPackageName -> $newPackageName")
+
+                                var updatedCount = 0
+                                for (packageBlock in tableBlock.listPackages()) {
+                                    val oldName = packageBlock.name
+
+                                    if (oldName != null && oldName.startsWith(originalPackageName)) {
+                                        val suffix = oldName.removePrefix(originalPackageName)
+                                        val newName = newPackageName + suffix
+
+                                        logger.info("Updating package: $oldName -> $newName")
+                                        packageBlock.setNameAndUpdateReferences(newName)
+                                        updatedCount++
+                                    }
+                                }
+
+                                if (updatedCount > 0) {
+                                    tableBlock.refreshFull()
+                                    logger.info("Successfully updated $updatedCount package(s) in resources.arsc")
+                                } else {
+                                    logger.warning("No packages were updated")
+                                }
+
+                            } catch (e: Exception) {
+                                logger.severe("Failed to synchronize resources.arsc: ${e.message}")
+                                e.printStackTrace()
+                                throw PatchException("Failed to update resources.arsc package names", e)
+                            }
+                        } ?: logger.warning("No TableBlock found in encoded module")
+
                     } ?: throw PatchException("AndroidManifest not found in encoded module")
+
+                    encodedModule.keepManifestChanges()
+                    encodedModule.keepTableBlockChanges()
 
                     logger.info("Writing resources.apk")
                     encodedModule.writeApk(this)
